@@ -1,0 +1,29 @@
+.{
+    .name = .zstd_consumer,
+    .version = "0.1.0",
+    // Observed, not derived. A package fingerprint is an identifier the Zig
+    // toolchain computes for a named package, and the first observed
+    // `zig build consumer` reported it:
+    //
+    //     consumer/build.zig.zon:1:2: error: missing top-level 'fingerprint'
+    //     field; suggested value: 0xf26eecb66c601178
+    //
+    // That is the toolchain's own value for `.zstd_consumer`, written here in
+    // the same change that observed it, which is the only sense in which a
+    // fingerprint can be honest. Nothing in this package's source or build
+    // graph reads it.
+    .fingerprint = 0xf26eecb66c601178,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        // A relative path, not a registry or archive URL. The consumer is the
+        // proof that `dep.module("zstd")` works from outside the package that
+        // defines it; resolving that through the network would make the proof
+        // depend on a published state of the world instead.
+        .zstd = .{ .path = ".." },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

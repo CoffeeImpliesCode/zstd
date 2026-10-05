@@ -1,0 +1,20 @@
+# devenv input pin for the Zstandard SDK.
+#
+# The nixpkgs channel is pinned by revision so a shell is reproducible from the
+# lock. The matching flake input lives in flake.nix and is pinned independently,
+# because the two entry points resolve in different contexts.
+#
+# devenv.lock is not written here: the driver owns locks.
+#
+# There is deliberately no `flake:` key on this input. `flake: false` makes
+# devenv read the input as a plain source tree, and a plain source tree has no
+# `lib`, so every devenv subcommand dies while bootstrapping: its
+# `bootstrapLib.nix:54` evaluates `lib = nixpkgs.lib` and the run ends with
+# `error: attribute 'lib' missing`. The revision pin is the whole contract.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+# See FORK-LICENSE.md for what that identifier covers.
+
+inputs:
+  nixpkgs:
+    url: "github:cachix/devenv-nixpkgs/c2f38fe7f9e04d9aadd354d380f2bd40531d9737"

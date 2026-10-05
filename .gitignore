@@ -1,0 +1,160 @@
+# Upstream's own ignore file, kept. `src/.gitignore` ships in the release
+# tarball and is reproduced here verbatim, because upstream's conventions are
+# upstream's business and none of them is removed to make room for a
+# fork-owned entry.
+#
+# ONE CHANGE, and it is a scoping change rather than a removal. Four entries in
+# the upstream file are written as if the file lived in the repository root:
+# `/zstd`, `zstdmt`, `bin/` and `build-*`. Upstream's file is at `src/`, so
+# those anchored forms mean upstream's own build outputs inside `src/`. Left
+# unanchored at the root of *this* repository they would mean something else --
+# and `/zstd` at this root is this package's own source directory, which is the
+# one path in the tree that must never be ignored. They are re-anchored to
+# `src/` in the block below, which keeps each convention and fixes what it
+# points at.
+#
+# THE OTHER THING THIS FILE HAS TO DO: upstream's list contains `*.zst` and
+# `tmp*`. Eleven of this package's fixtures are `.zst` files under `fixtures/`,
+# and they are the oracle the interoperation tests rest on. A fork-owned
+# re-inclusion block appears at the end, and it is not optional.
+
+# --- upstream src/.gitignore, verbatim ---
+
+# Object files
+*.o
+*.ko
+*.dSYM
+
+# Libraries
+*.lib
+*.a
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+*.framework
+*.xcframework
+
+# Executables
+/zstd
+zstdmt
+*.exe
+*.out
+*.app
+
+# Test artefacts
+tmp*
+*.zst
+*.zstd
+dictionary.
+dictionary
+NUL
+cmakebuild/
+install/
+
+# Build artefacts
+contrib/linux-kernel/linux/
+projects/
+bin/
+.buckd/
+buck-out/
+build-*
+*.gcda
+
+# IDE
+.clang_complete
+compile_flags.txt
+*.clang-format
+
+# Other files
+.directory
+_codelite/
+_zstdbench/
+*.idea
+*.swp
+.DS_Store
+googletest/
+*.d
+*.vscode
+*.code-workspace
+compile_commands.json
+.clangd
+perf.data
+perf.data.old
+
+# --- upstream's entries re-anchored to the tree they describe ---
+#
+# Each of these is the same convention as the entry above it, pointed at `src/`
+# where upstream's own file was already pointing. Nothing is dropped.
+
+/src/zstd
+/src/zstdmt
+/src/contrib/linux-kernel/linux/
+/src/projects/
+/src/bin/
+
+# --- zig build artefacts (fork addition) ---
+#
+# These are directories rather than single files because a normal `zig build`
+# creates them, and a normal `zig build` must not dirty the tree or leak into
+# the package published from it. None of them is named in build.zig.zon
+# `.paths`, so an ignored directory can never become part of the package.
+.zig-cache/
+zig-out/
+# Zig 0.16 fetches dependencies into a project-local directory. This package
+# declares no dependencies, so this exists only so that a future one cannot
+# commit a fetched tree.
+zig-pkg/
+
+# The consumer package builds inside this repository and has its own cache and
+# output tree. It is ignored here as well as in consumer/.gitignore so a build
+# run from the repository root cannot commit it by accident.
+consumer/.zig-cache/
+consumer/zig-out/
+consumer/zig-pkg/
+
+# --- fork re-inclusions (fork addition) ---
+#
+# Upstream's `*.zst`, `tmp*`, `*.a`, `*.so` and `build-*` patterns above are
+# correct for upstream's build outputs and wrong for this repository's fixture
+# set, which is data, not output. These lines re-include the fork's own paths.
+# Git applies later rules over earlier ones, so they win, and a rule here
+# re-includes a file only because the *file* is matched -- none of the directory
+# names below is excluded by any pattern above, so re-inclusion is effective.
+#
+# The eleven `.zst` fixtures are the concrete reason. They are the frames the
+# RFC 8878 tests decode and the frames the CLI and Python binding produced, and
+# `fixtures/SHA256SUMS` digests all of them: an ignored fixture is a missing
+# fixture, and `@embedFile` on a missing file is a build failure that looks like
+# a bug in the build graph rather than a mistake in an ignore file.
+!fixtures/
+!fixtures/**
+!fixtures/**/*.zst
+!fixtures/**/*.plain
+!fixtures/**/*.txt
+!fixtures/SHA256SUMS
+!fixtures/PROVENANCE.md
+
+# `smoke.zig` writes one frame into the working directory, reads it back and
+# deletes it with a `defer`. The entry is here so that a run interrupted between
+# the write and the delete cannot leave a stray frame behind.
+zstd-smoke-*.zst
+
+# --- Nix and devenv working-tree artefacts (fork addition) ---
+#
+# `nix build` writes `result` (and `result-1`, `result-2`, ... on a rebuild)
+# into the directory that asked for it, and `devenv` writes its resolved inputs
+# and its state beside the project. None of them is named in build.zig.zon
+# `.paths`, so an ignored path can never become part of the package either.
+# `devenv.lock` and `flake.lock` are deliberately *not* here: they are real
+# inputs, they belong to the driver, and ignoring them would be the wrong way to
+# keep a build out of a commit.
+result
+result-*
+.devenv/
+.devenv.flake.nix
+.devenv.flakes/
+devenv.local.nix
+.direnv/
