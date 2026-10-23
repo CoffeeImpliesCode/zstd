@@ -454,7 +454,7 @@ pub fn errorCodeText(code: ErrorCode) [:0]const u8 {
         .unrecognised => return "an error code outside Zstandard's own taxonomy",
         else => {},
     }
-    return std.mem.span(c.ZSTD_getErrorString(@intCast(@intFromEnum(code))));
+    return std.mem.span(c.ZSTD_getErrorString(@intCast(@backingInt(code))));
 }
 
 /// Return the maximum compressed size for `src_len` bytes.
@@ -596,20 +596,20 @@ pub const Ctx = struct {
     /// Set a named compression parameter.
     /// Most changes require an initial frame stage; out-of-range values error except levels.
     pub fn setParameter(self: *Ctx, param: CParameter, value: Level) Error!void {
-        try checkedVoid(c.ZSTD_CCtx_setParameter(self.handle(), @intCast(@intFromEnum(param)), value));
+        try checkedVoid(c.ZSTD_CCtx_setParameter(self.handle(), @intCast(@backingInt(param)), value));
     }
 
     /// Read a compression parameter from the context.
     /// Upstream marks this query `ZSTDLIB_STATIC_API`.
     pub fn getParameter(self: *Ctx, param: CParameter) Error!Level {
         var value: Level = undefined;
-        try checkedVoid(c.ZSTD_CCtx_getParameter(self.handle(), @intCast(@intFromEnum(param)), &value));
+        try checkedVoid(c.ZSTD_CCtx_getParameter(self.handle(), @intCast(@backingInt(param)), &value));
         return value;
     }
 
     /// Set a level during initialization without checking the result.
     fn setLevelNoFail(self: *Ctx, new_level: Level) void {
-        _ = c.ZSTD_CCtx_setParameter(self.handle(), @intCast(@intFromEnum(CParameter.compression_level)), new_level);
+        _ = c.ZSTD_CCtx_setParameter(self.handle(), @intCast(@backingInt(CParameter.compression_level)), new_level);
     }
 
     /// Tell the encoder the input size; this enables the frame content-size field.
@@ -635,13 +635,13 @@ pub const Ctx = struct {
             self.handle(),
             output,
             input,
-            @intCast(@intFromEnum(endOp)),
+            @intCast(@backingInt(endOp)),
         ));
     }
 
     /// Reset the session, parameters, or both.
     pub fn reset(self: *Ctx, directive: Reset) Error!void {
-        try checkedVoid(c.ZSTD_CCtx_reset(self.handle(), @intCast(@intFromEnum(directive))));
+        try checkedVoid(c.ZSTD_CCtx_reset(self.handle(), @intCast(@backingInt(directive))));
     }
 
     /// Compress with a digested dictionary; its level and frame parameters are fixed at creation.
@@ -697,7 +697,7 @@ pub const Dctx = struct {
     /// Set a decompression parameter before frame decoding; later changes return `error.WrongStage`.
     /// Upstream restricts this to frame initialization (`src/lib/zstd.h:683-686`).
     pub fn setParameter(self: *Dctx, param: DParameter, value: Level) Error!void {
-        try checkedVoid(c.ZSTD_DCtx_setParameter(self.handle(), @intCast(@intFromEnum(param)), value));
+        try checkedVoid(c.ZSTD_DCtx_setParameter(self.handle(), @intCast(@backingInt(param)), value));
     }
 
     /// Decompress all frames into `dst`, using this context as the workspace.
@@ -727,7 +727,7 @@ pub const Dctx = struct {
 
     /// Reset the context according to the requested directive.
     pub fn reset(self: *Dctx, directive: Reset) Error!void {
-        try checkedVoid(c.ZSTD_DCtx_reset(self.handle(), @intCast(@intFromEnum(directive))));
+        try checkedVoid(c.ZSTD_DCtx_reset(self.handle(), @intCast(@backingInt(directive))));
     }
 
     /// Decompress with a read-only digested dictionary that can be shared between threads.
@@ -796,7 +796,7 @@ pub const CStream = struct {
             self.handle(),
             output,
             input,
-            @intCast(@intFromEnum(endOp)),
+            @intCast(@backingInt(endOp)),
         ));
     }
 
@@ -812,7 +812,7 @@ pub const CStream = struct {
 
     /// Set a named compression parameter on this context.
     pub fn setParameter(self: *CStream, param: CParameter, value: Level) Error!void {
-        try checkedVoid(c.ZSTD_CCtx_setParameter(self.handle(), @intCast(@intFromEnum(param)), value));
+        try checkedVoid(c.ZSTD_CCtx_setParameter(self.handle(), @intCast(@backingInt(param)), value));
     }
 
     /// Return this handle as `ZSTD_CCtx*`; upstream defines `CStream` as that alias.
@@ -870,7 +870,7 @@ pub const DStream = struct {
 
     /// Reset the context after an error or to begin a new session.
     pub fn reset(self: *DStream, directive: Reset) Error!void {
-        try checkedVoid(c.ZSTD_DCtx_reset(self.handle(), @intCast(@intFromEnum(directive))));
+        try checkedVoid(c.ZSTD_DCtx_reset(self.handle(), @intCast(@backingInt(directive))));
     }
 
     /// Return this handle as `ZSTD_DCtx*`; upstream defines `DStream` as that alias.

@@ -5,7 +5,7 @@ See FORK-LICENSE.md for what that identifier covers.
 
 # Zstandard
 
-Zstandard 1.5.7 packaged with a Zig 0.16.0 build graph and typed facade.
+Zstandard 1.5.7 packaged with a Zig 0.17.0 build graph and typed facade.
 The package builds and installs the native library, public headers, and `zstd.pc`.
 
 ## Source deviations

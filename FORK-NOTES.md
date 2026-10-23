@@ -23,6 +23,10 @@ Upstream behavior retained: with `ZSTD_LEGACY_SUPPORT=5`, `ZSTD_decompress` can 
 - `common/pool.c` is included because dictionary trainers call its API even with `ZSTD_MULTITHREAD` undefined. Its single-thread path runs jobs inline; `common/threading.c` remains in the selected source closure.
 - The C library and header translation share target macros. The build uses C99, `XXH_NAMESPACE=ZSTD_`, `DEBUGLEVEL=0`, and `ZSTD_LEGACY_SUPPORT=5`; it does not define `ZSTD_MULTITHREAD`.
 - System mode uses installed `libzstd` and headers instead of compiling or installing a bundled artifact. Runtime mode routes translated symbols through an explicitly loaded provider and does not link the archive; it is independent of static or shared delivery.
+- Zig 0.17 exposes the install prefix only as a lazy path, so the nested consumer install uses the parent prefix, including its default.
+- Zig 0.17 nested builds use separate `--cache-dir` and `--prefix` arguments and inherit `ZIG_GLOBAL_CACHE_DIR` and `ZIG_LIB_DIR`; `--global-cache-dir` is no longer a build option.
+- Zig 0.17 no longer exposes `--libc-runtimes` to build scripts; Linux QEMU consumer targets install instead of running.
+- Zig 0.17 no longer exposes `b.args`; the consumer program selects its default fixtures when no arguments are supplied.
 
 ## Platform boundaries
 

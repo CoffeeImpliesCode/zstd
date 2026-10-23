@@ -591,7 +591,7 @@ test "a truncated frame is an error and leaves the destination untouched" {
     const block = decodeBlockHeader(cli_level_3, 6);
     try testing.expectEqual(@as(u21, 123), block.size);
 
-    var dst: [256]u8 = [_]u8{0xa5} ** 256;
+    var dst: [256]u8 = @splat(0xa5);
     try testing.expectError(error.SrcSizeWrong, zstd.decompress(&dst, &truncated));
     for (dst) |byte| try testing.expectEqual(@as(u8, 0xa5), byte);
 
@@ -920,7 +920,7 @@ test "each context frees exactly once and two contexts are independent" {
     var raw_level: zstd.Level = undefined;
     const raw_read = zstd.c.ZSTD_CCtx_getParameter(
         ctx.handle(),
-        @intCast(@intFromEnum(zstd.CParameter.compression_level)),
+        @intCast(@backingInt(zstd.CParameter.compression_level)),
         &raw_level,
     );
     try testing.expect(!zstd.isError(raw_read));

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 // See FORK-LICENSE.md for what that identifier covers.
 //
-//! Zig 0.16 build for Zstandard 1.5.7.
+//! Zig 0.17.0 build for Zstandard 1.5.7.
 
 const std = @import("std");
 
@@ -170,9 +170,9 @@ const Graph = struct {
 fn addGraph(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     library: Library,
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
     runtime_loaded: bool,
     public: bool,
 ) Graph {
@@ -258,8 +258,8 @@ fn addGraph(
 fn add_c_library(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    requested: std.builtin.LinkMode,
+    optimize: std.lang.Optimize,
+    requested: std.lang.LinkMode,
     platform: Platform,
     name: []const u8,
 ) *std.Build.Step.Compile {
@@ -354,9 +354,9 @@ fn add_target_check(
     b: *std.Build,
     step: *std.Build.Step,
     query: std.Target.Query,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     library: Library,
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
     runtime_loaded: bool,
 ) void {
     const cross_target = b.resolveTargetQuery(query);
@@ -394,9 +394,9 @@ fn add_target_check(
 fn runConsumer(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.Optimize,
     library: Library,
-    linkage: std.builtin.LinkMode,
+    linkage: std.lang.LinkMode,
     runtime_loaded: bool,
 ) *std.Build.Step.Run {
     const triple = target.query.zigTriple(b.allocator) catch @panic("OOM");
@@ -409,7 +409,7 @@ fn runConsumer(
     const run = b.addSystemCommand(&.{ b.graph.zig_exe, "build" });
     run.setName("consumer package");
     run.setCwd(b.path("consumer"));
-    run.addArg(if (hostCanExecute(b, target)) "run" else "install");
+    addConsumerExecutionMode(run, b, target);
     run.addArg(b.fmt("-Dtarget={s}", .{triple}));
     run.addArg(b.fmt("-Dcpu={s}", .{cpu}));
     run.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
@@ -419,64 +419,64 @@ fn runConsumer(
     run.addArg(b.fmt("-Druntime={s}", .{if (runtime_loaded) "true" else "false"}));
     // Forward the resolved system-integration mode through build-runner flags.
     run.addArg(if (library == .system) b.fmt("-fsys={s}", .{lib_name}) else b.fmt("-fno-sys={s}", .{lib_name}));
-    // Forward enabled executors to the consumer build.
-    if (b.enable_darling) run.addArg("-fdarling");
-    if (b.enable_qemu) run.addArg("-fqemu");
-    if (b.enable_rosetta) run.addArg("-frosetta");
-    if (b.enable_wasmtime) run.addArg("-fwasmtime");
-    if (b.enable_wine) run.addArg("-fwine");
-    if (b.libc_runtimes_dir) |runtimes| run.addArgs(&.{ "--libc-runtimes", runtimes });
     run.addArg("-j8");
     run.addArg("--summary");
     run.addArg("all");
-    if (b.cache_root.path) |cache| {
-        run.addArg("--cache-dir");
-        run.addArg(b.fmt("{s}/consumer", .{cache}));
-    }
-    // Reuse this build's global cache in the consumer build.
-    if (b.graph.global_cache_root.path) |global_cache| {
-        run.addArg("--global-cache-dir");
-        run.addArg(global_cache);
-    }
-    // Forward a nondefault prefix as an absolute path, avoiding consumer/zig-out.
-    const default_prefix = b.build_root.join(b.allocator, &.{"zig-out"}) catch @panic("OOM");
-    if (!std.mem.eql(u8, b.install_prefix, default_prefix)) {
-        const prefix = if (std.fs.path.isAbsolute(b.install_prefix))
-            b.install_prefix
-        else
-            b.pathJoin(&.{ b.graph.cache.cwd, b.install_prefix });
-        run.addArg("--prefix");
-        run.addArg(prefix);
-    }
-    // Forward caller arguments to the consumer after its options.
-    if (b.args) |args| {
-        run.addArg("--");
-        run.addArgs(args);
-    }
+    run.addArg("--cache-dir");
+    run.addDirectoryArg2(std.Build.LazyPath.cache_root.path(b, "consumer"), .{});
+    // Nested builds inherit ZIG_GLOBAL_CACHE_DIR and ZIG_LIB_DIR.
+    run.addArg("--prefix");
+    run.addDirectoryArg2(.{ .relative = .{ .base = .install_prefix } }, .{});
+    // Forward caller arguments after the consumer's build options.
+    run.addPassthruArgs();
     run.has_side_effects = true;
     return run;
 }
 
-/// Reports whether this host can run binaries for the selected target.
-fn hostCanExecute(b: *std.Build, target: std.Build.ResolvedTarget) bool {
+/// Add the consumer's run or install step based on the available executor.
+fn addConsumerExecutionMode(
+    run: *std.Build.Step.Run,
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+) void {
     const host = &b.graph.host.result;
     const candidate = &target.result;
-    const options: std.zig.system.GetExternalExecutorOptions = .{
-        .allow_darling = b.enable_darling,
-        .allow_qemu = b.enable_qemu,
-        .allow_wasmtime = b.enable_wasmtime,
-        .allow_wine = b.enable_wine,
-        // The consumer executable has no explicit linkage, so the musl runtime gate does not apply.
-        .qemu_fixes_dl = candidate.isGnuLibC() and b.libc_runtimes_dir != null,
+    const executor = std.zig.system.getExternalExecutor(b.graph.io, candidate, .{
+        .host_cpu_arch = host.cpu.arch,
+        .host_os_tag = host.os.tag,
+        .link_mode = .dynamic,
         .link_libc = true,
-    };
-    return switch (std.zig.system.getExternalExecutor(b.graph.io, host, candidate, options)) {
-        .native, .rosetta => true,
-        .wine, .wasmtime, .darling => true,
-        // GNU libc QEMU targets need an explicit libc runtime directory.
-        .qemu => !(candidate.isGnuLibC() and b.libc_runtimes_dir == null),
-        .bad_dl, .bad_os_or_cpu => false,
-    };
+    });
+
+    switch (executor) {
+        .native => run.addArg("run"),
+        .rosetta => {
+            run.addArg("run");
+            run.addThirdPartyEnabledArgRosetta(.{ .enabled = "-frosetta" });
+        },
+        .qemu => {
+            // Zig 0.17 no longer exposes --libc-runtimes to build scripts.
+            if (candidate.os.tag == .linux) {
+                run.addArg("install");
+            } else {
+                run.addThirdPartyEnabledArgQemu(.{ .enabled = "run", .disabled = "install" });
+                run.addThirdPartyEnabledArgQemu(.{ .enabled = "-fqemu" });
+            }
+        },
+        .darling => {
+            run.addThirdPartyEnabledArgDarling(.{ .enabled = "run", .disabled = "install" });
+            run.addThirdPartyEnabledArgDarling(.{ .enabled = "-fdarling" });
+        },
+        .wasmtime => {
+            run.addThirdPartyEnabledArgWasmtime(.{ .enabled = "run", .disabled = "install" });
+            run.addThirdPartyEnabledArgWasmtime(.{ .enabled = "-fwasmtime" });
+        },
+        .wine => {
+            run.addThirdPartyEnabledArgWine(.{ .enabled = "run", .disabled = "install" });
+            run.addThirdPartyEnabledArgWine(.{ .enabled = "-fwine" });
+        },
+        .bad_dl, .bad_os_or_cpu => run.addArg("install"),
+    }
 }
 
 /// Generates pkg-config metadata from upstream's `src/lib/libzstd.pc.in`.
@@ -542,7 +542,7 @@ pub fn build(b: *std.Build) void {
     const library: Library = if (use_system) .system else .bundled;
 
     const linkage_option = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Deliver the native library as a static archive (the default, and what " ++
             "upstream's own lib/Makefile builds) or as a real shared object with " ++
@@ -554,7 +554,7 @@ pub fn build(b: *std.Build) void {
     );
 
     // Preserve static bundled linkage and Zig's dynamic system-library default.
-    const linkage: std.builtin.LinkMode = linkage_option orelse
+    const linkage: std.lang.LinkMode = linkage_option orelse
         (if (library == .system) .dynamic else .static);
 
     // Runtime dispatch is independent of artifact linkage.
@@ -600,7 +600,7 @@ pub fn build(b: *std.Build) void {
     // The smoke step runs the example without depending on installation.
     const run_example = b.addRunArtifact(example);
     run_example.has_side_effects = true;
-    if (b.args) |args| run_example.addArgs(args);
+    run_example.addPassthruArgs();
     b.step("smoke", "Run the deterministic example program").dependOn(&run_example.step);
 
     // Use tests.zig as the root so its test declarations are discovered.
@@ -699,8 +699,8 @@ fn targetHasDynamicLinker(target: std.Build.ResolvedTarget) bool {
 /// Resolves linkage; dynamic linkage requires a target dynamic linker.
 fn deliveredLinkage(
     target: std.Build.ResolvedTarget,
-    requested: std.builtin.LinkMode,
-) std.builtin.LinkMode {
+    requested: std.lang.LinkMode,
+) std.lang.LinkMode {
     if (requested == .dynamic and !targetHasDynamicLinker(target)) {
         std.debug.panic(
             "zstd: -Dlinkage=dynamic was asked for {s}, which has no dynamic " ++

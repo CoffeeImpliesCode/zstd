@@ -5,7 +5,7 @@
     .fingerprint = 0x72fd505e6942b7a7,
     // Upstream release version, checked against the source header.
     .version = "1.5.7",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{},
     .paths = .{
         "build.zig",

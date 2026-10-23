@@ -254,7 +254,7 @@ fn loadProvider(path: []const u8) !void {
 
 /// Encode an upstream error as `size_t`; unsigned negation overflows in Zig.
 fn errorResult(code: zstd.ErrorCode) usize {
-    return @bitCast(-@as(isize, @intFromEnum(code)));
+    return @bitCast(-@as(isize, @backingInt(code)));
 }
 
 /// Print, then compare. A mismatch exits non-zero through `SmokeCheckFailed`.

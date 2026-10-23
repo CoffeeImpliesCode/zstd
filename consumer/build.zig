@@ -14,7 +14,7 @@ pub fn build(b: *std.Build) void {
 
     // Forward linkage and dispatch options instead of silently using defaults.
     const linkage = b.option(
-        std.builtin.LinkMode,
+        std.lang.LinkMode,
         "linkage",
         "Which delivery of libzstd to check. Forwarded to the dependency; it " ++
             "decides the artifact, never anything in this package.",
@@ -55,16 +55,7 @@ pub fn build(b: *std.Build) void {
     const run_exe = b.addRunArtifact(exe);
     run_exe.has_side_effects = true;
 
-    if (b.args) |args| {
-        run_exe.addArgs(args);
-    } else {
-        // Default fixture paths are relative to `consumer/` in both build modes.
-        // Include a frame without a checksum or content size.
-        run_exe.addArgs(&.{
-            "../fixtures/cli/level-3.zst",
-            "../fixtures/pyzstd/bare-3.zst",
-        });
-    }
+    run_exe.addPassthruArgs();
 
     const run_step = b.step("run", "Build and run the consumer program");
     run_step.dependOn(&run_exe.step);

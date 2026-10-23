@@ -165,10 +165,15 @@ pub fn main(init: std.process.Init) !void {
     try checkInt(w, "a skippable magic number is recognised", @intFromBool(zstd.isSkippableFrame(&skippable)), 1);
 
     const args = try init.minimal.args.toSlice(arena);
+    const default_frames: []const [:0]const u8 = &.{
+        "../fixtures/cli/level-3.zst",
+        "../fixtures/pyzstd/bare-3.zst",
+    };
+    const frame_args: []const [:0]const u8 = if (args.len == 1) default_frames else args[1..];
     var frames: usize = 0;
-    var index: usize = 1;
-    while (index < args.len) : (index += 1) {
-        const arg = args[index];
+    var index: usize = 0;
+    while (index < frame_args.len) : (index += 1) {
+        const arg = frame_args[index];
         // Skip the provider option and its value; neither is a frame path.
         if (std.mem.eql(u8, arg, "--provider")) {
             index += 1;

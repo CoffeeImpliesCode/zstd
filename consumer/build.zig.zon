@@ -13,7 +13,7 @@
     // fingerprint can be honest. Nothing in this package's source or build
     // graph reads it.
     .fingerprint = 0xf26eecb66c601178,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         // A relative path, not a registry or archive URL. The consumer is the
         // proof that `dep.module("zstd")` works from outside the package that
