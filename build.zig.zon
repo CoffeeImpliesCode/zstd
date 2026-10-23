@@ -1,98 +1,27 @@
 // SPDX-License-Identifier: BSD-3-Clause
-// See FORK-LICENSE.md for what that identifier covers, and NOTICE.md for the
-// per-file inventory of the upstream material this package ships.
+// Licence scope is recorded in FORK-LICENSE.md.
 .{
-    // The package id and the name a dependent writes in its dependency map,
-    // and the one registered module: `dep.module("zstd")`. All three are
-    // `zstd`, and `dep.artifact("zstd")` is the same string, which is what
-    // makes Zig emit `libzstd.a` - the name a C consumer's `-lzstd` needs,
-    // and upstream's own (`src/lib/libzstd.pc.in:14`, `Libs: -L${libdir}
-    // -lzstd`).
     .name = .zstd,
     .fingerprint = 0x72fd505e6942b7a7,
-    // Upstream's own release, read out of `src/lib/zstd.h:112-114`
-    // (`ZSTD_VERSION_MAJOR 1`, `ZSTD_VERSION_MINOR 5`, `ZSTD_VERSION_RELEASE
-    // 7`) and out of `src/README.md`. This is the version of the C library
-    // this package builds, not a version of the wrapper. `build.zig` compares
-    // it against the same three header numbers and refuses to configure when
-    // they disagree, so this string, the pkg-config `Version:` field and the
-    // shared object's file name cannot describe three different releases.
+    // Upstream release version, checked against the source header.
     .version = "1.5.7",
-    // The `.fingerprint` above is observed, not derived.
-    //
-    // A package fingerprint is an identifier the Zig toolchain *derives* for a
-    // named package, and this value is the one the compiler reported and then
-    // accepted: the first `zig build` over this tree ran with it, and the
-    // toolchain computed no objection to it. That is the only sense in which a
-    // fingerprint can be honest - it records what the toolchain said, not what
-    // this package hoped it would say.
-    //
-    // It is worth stating plainly which derivation it is *not*. One SDK in this
-    // workspace writes `sha256("<name> <version>")`'s first eight bytes
-    // big-endian (`mimalloc/build.zig.zon`, value `0x00cbf2f8c5a0e8db`), and
-    // that derivation would give `sha256("zstd 1.5.7")` =
-    // `0xdbbaed950e253e11e09f3683d622ae46ee02e3c9a59a8381206e8916f2fd36` here,
-    // which is not the value above. Nothing in this package's source, build
-    // graph or tests reads the field either way.
     .minimum_zig_version = "0.16.0",
-    // Nothing is fetched: the C library is this repository's own source, and
-    // the facade, tests, example, consumer and runtime table import only what
-    // is compiled here. Zstandard's own release is the tarball already
-    // unpacked into `src/`.
     .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",
-        // The cross-test harness profile for this package. It is a file in the
-        // package because it is how this package declares what its
-        // cross-platform gate is: `cross-test` discovers it by name from the
-        // package root, and it is settings only - the standard `zig build test`
-        // step over the full published platform matrix, no target subset and no
-        // host path. Nothing in build.zig reads it.
         "cross-test.profile.sh",
-        // zig/root.zig is the typed facade and zig/translate.h the aggregate
-        // translation header. Both travel because a dependent reaches them
-        // through `dep.module("zstd")`.
         "zig",
-        // Upstream's Zstandard, unmodified: the complete 1.5.7 release source
-        // tree - the 34 compiled units, which are 33 `.c` files plus
-        // `decompress/zstd_decompress_amd64.S`. The four wildcards at
-        // `src/lib/libzstd.mk:149-152` collect 30 `.c` files, `ZSTD_LEGACY_FILES`
-        // at `:154` is empty by default and this build adds three of the seven
-        // `legacy/` units, and `:156` collects the one assembly unit, giving
-        // 8 + 14 + 4 + 4 + 3 + 1. The
-        // three installed headers, upstream's own `lib/Makefile`,
-        // `lib/libzstd.mk`, `lib/libzstd.pc.in` and `lib/module.modulemap`, the
-        // `legacy/` and `deprecated/` trees this build does not compile, the
-        // `zlibWrapper/` compatibility shim, `programs/`, `contrib/`, `tests/`
-        // including the golden-decompression corpus `tests.zig` embeds,
-        // `build/`, `doc/`, `examples/`, and both licence texts. The whole
-        // directory travels rather than a hand-picked file list so that the tree
-        // a dependent receives is upstream's tree: nothing here is edited,
-        // re-entered or regenerated, and a build that needed a file not in this
-        // closure would have to edit upstream to get it.
+        // Complete upstream 1.5.7 release source tree.
         "src",
         "tests.zig",
         "smoke.zig",
-        // The separate consumer package: proof that the published module
-        // resolves from a package that did not write it, through a relative
-        // path rather than a fetch.
         "consumer/build.zig",
         "consumer/build.zig.zon",
         "consumer/src/main.zig",
-        // The fixture set and its provenance record. `fixtures/` is named as a
-        // directory because the RFC 8878 frames, the two `.plain` pairs beside
-        // them and the three producer subdirectories are a set that moves
-        // together; nothing build output lands under it, and
-        // `fixtures/SHA256SUMS` plus `tools/check-provenance.sh` are what prove
-        // the set did not change.
+        // Test fixtures and their provenance record.
         "fixtures",
-        // Upstream's own README, preserved byte for byte as the record it is,
-        // and the licence and provenance records this fork added around it.
-        // Both of Zstandard's texts travel: `src/LICENSE` is the BSD-3-Clause
-        // text and `src/COPYING` the GPL-2.0 text, and upstream's grant is
-        // "either, at your option" (`src/lib/libzstd.mk:8`), so installing one
-        // and dropping the other would misreport it rather than narrow it.
+        // Fork and upstream licence/provenance records.
         "README.upstream.md",
         "UPSTREAM.md",
         "UPSTREAM.sha256",
@@ -102,32 +31,14 @@
         "CHANGELOG.md",
         "FORK-NOTES.md",
         "FORK-LICENSE.md",
-        // The provenance script that checks the recorded digests and the exact
-        // upstream and fixture file sets.
+        // Provenance checker.
         "tools",
-        // The runtime loader core the API role owns, and this library's
-        // generated dispatch and descriptor beside it. It is a dependency of the
-        // published module under `-Druntime`, so a dependent that fetches this
-        // package must receive it; `runtime/graph.zig` is the one place
-        // `createModule` substitutes for `translate.createModule()`.
+        // Runtime-loading implementation used by -Druntime.
         "runtime",
-        // Standalone Nix packaging. `package.nix` is the one source-only
-        // derivation and builds the `.static` and `.dynamic` variants of this
-        // same tree; `flake.nix` exposes them; `devenv.nix`, `devenv.yaml` and
-        // `.envrc` provide the canonical development shell. `flake.lock` belongs
-        // to the driver and is deliberately absent from this list until the
-        // driver generates one: `zig fetch` hashes every named path, so naming
-        // `flake.lock` while no such file exists would fail the fetch rather
-        // than record an absence. Add it here in the same change that writes
-        // the lock.
         "package.nix",
         "flake.nix",
         "devenv.nix",
         "devenv.yaml",
         ".envrc",
-        // .zig-cache/, zig-out/, zig-pkg/, consumer/.zig-cache/ and the Nix and
-        // devenv working-tree artefacts are deliberately absent: build outputs,
-        // a fetched package tree, a `result` symlink and shell state are not
-        // part of a package. See .gitignore.
     },
 }

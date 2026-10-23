@@ -1,23 +1,4 @@
-# Canonical development environment for the Zstandard SDK.
-#
-# This is the environment a contributor should be in. It installs tools and
-# nothing else: `packages` deliberately does not contain the SDK's own package,
-# because entering a shell must not require building a library to have it.
-#
-# The package itself is defined once, in ./package.nix, and shared with
-# flake.nix, so the two entry points cannot describe different builds. `outputs`
-# below name that same derivation lazily -- they are attributes, not builds, so
-# nothing is realised until `devenv build outputs.static` or
-# `devenv build outputs.shared` is actually run.
-#
-# devenv.lock is not written here: the driver owns locks.
-#
-# Two facts about the environment a task actually runs in are handled once, in
-# the `let` below, and every task uses them: devenv materialises a task as a
-# generated shell program that inherits the caller's working directory, and
-# `zig build` defaults both its local cache and its install prefix to
-# directories inside the working tree. Neither is visible from a task body, and
-# both decide whether a task can find this checkout or must write into it.
+# Development environment and tasks for the Zstandard SDK.
 #
 # SPDX-License-Identifier: BSD-3-Clause
 # See FORK-LICENSE.md for what that identifier covers.
@@ -25,8 +6,7 @@
 { pkgs, ... }:
 
 let
-  # Kept as a value rather than inlined, so the version assertion below and the
-  # package list cannot disagree about which compiler is meant.
+  # Use one Zig package value for both the shell and version assertion.
   zig = pkgs.zig_0_16;
 
   zstd = linkage: pkgs.callPackage ./package.nix {
@@ -34,23 +14,10 @@ let
     zig = zig;
   };
 
-  # The directory this module was evaluated against. `./.` is a path literal
-  # resolved relative to the file that names it, so it is this checkout and
-  # never the directory `devenv` was started from. `builtins.toString`
-  # converts that path instead of interpolating it into a string, so what the
-  # tasks below receive is this working tree: a plain `${./.}` would carry the
-  # path's store context and copy this whole SDK into the read-only store, and
-  # that copy is not the tree `build.zig` and `UPSTREAM.sha256` describe. No
-  # host path is written in this file -- the value is read out of the module's
-  # own location, so it tracks wherever this checkout is.
+  # Pass tasks the checkout path without copying it into the Nix store.
   sdk_root = builtins.toString ./.;
 
-  # Where a task's build output goes. `zig build` keeps its local cache in
-  # `.zig-cache/` and installs into `zig-out/`, both relative to the working
-  # directory, and this checkout is a working tree on a volume mount that has to
-  # stay byte-identical. A directory the caller exported always wins and is
-  # never overwritten; otherwise it comes from `XDG_CACHE_HOME`, then `TMPDIR`,
-  # and this file names no location of its own.
+  # Put Zig caches outside the checkout, respecting caller-provided paths.
   zig_caches = ''
     if [ -z "''${ZIG_LOCAL_CACHE_DIR:-}" ]; then
       if [ -n "''${XDG_CACHE_HOME:-}" ]; then
@@ -74,9 +41,7 @@ let
     fi
   '';
 
-  # The same rule with the one extra requirement a task has: it must be able to
-  # name that directory. An environment with nowhere outside the checkout to
-  # write stops here, with the reason, instead of filling the tree.
+  # Stop tasks if no external cache directory is available.
   require_external_output = ''
     if [ -z "''${ZIG_LOCAL_CACHE_DIR:-}" ]; then
       echo "zstd devenv: ZIG_LOCAL_CACHE_DIR, XDG_CACHE_HOME and TMPDIR are all unset," >&2
@@ -86,38 +51,24 @@ let
     fi
   '';
 
-  # What every task below starts with. devenv materialises a task as a
-  # generated shell program that inherits the caller's working directory, so
-  # `devenv --from path:<sdk>` entered from a scratch project directory would
-  # otherwise run each of these bodies where there is no `build.zig` and no
-  # `UPSTREAM.sha256`. A per-task `cwd` would not reach that generated
-  # program, and `$DEVENV_ROOT` is the scratch project itself -- exactly what
-  # these bodies must not build in.
+  # Run task bodies from the SDK checkout regardless of the caller's directory.
   in_sdk = ''
     ${zig_caches}
     ${require_external_output}
     cd "${sdk_root}" || exit 1
   '';
 
-  # The flags every native build here shares: this workspace's eight jobs,
-  # fixed, then the printed step list and a local cache outside the checkout.
-  # `"''$@"` stays after them, so whatever a caller appended is still passed
-  # on and still comes later; `devenv tasks run` forwards no argument of its
-  # own, so it is the empty list on that route.
+  # Pass job count, summary, cache, and caller arguments to native builds.
   native_flags = ''
     -j8 --summary all --cache-dir "$ZIG_LOCAL_CACHE_DIR/native" "''$@"
   '';
 
-  # The consumer package is a second build graph with its own manifest, so it
-  # gets its own cache directory rather than sharing one with the library.
+  # Keep the consumer package's cache separate.
   consumer_flags = ''
     -j8 --summary all --cache-dir "$ZIG_LOCAL_CACHE_DIR/consumer" "''$@"
   '';
 
-  # The file a runtime-loading task loads. It is the shared object this same
-  # tree builds, named by path, never discovered: a runtime-loading build that
-  # was not told which file to load must say so rather than loading something
-  # else. `sdk:runtime:shared-provider` puts it here first.
+  # Runtime tasks load the shared object from this external path.
   provider = "$ZIG_LOCAL_CACHE_DIR/prefix/dynamic/lib/libzstd.so";
 in
 {
@@ -134,33 +85,19 @@ in
     }
   ];
 
-  # The shell hook exports the same two directories the tasks use, by the same
-  # rule, so an ordinary `devenv shell` session also leaves this checkout alone.
-  # A value the caller exported is kept exactly as it is, and with nothing to
-  # choose from the hook chooses nothing: only a task, which has to name the
-  # directory, refuses to run.
+  # Interactive shells use the same external cache paths as tasks.
   enterShell = ''
     ${zig_caches}
   '';
 
-  # Lazy on purpose: naming a derivation realises nothing, and entering the
-  # shell does not build either variant. `devenv build outputs.<name>` is the
-  # real packaging route; the task names below print the equivalent flake
-  # command, which needs the driver-owned lock.
+  # Output attributes are lazy; builds run only when requested.
   outputs.static = zstd "static";
   outputs.shared = zstd "dynamic";
   outputs.default = zstd "static";
 
-  # Every task name here is `namespace:name` and nothing else. devenv 2.4.1
-  # accepts alphanumerics, `:`, `-` and `_` in a task name and rejects anything
-  # else before any shell runs, so a name written with a `.` after the namespace
-  # would be refused at parse time. The two names the driver runs --
-  # `sdk:consumer` and `sdk:provenance` -- are spelled that way for that reason.
+  # Use namespace:name task names for devenv compatibility.
   tasks = {
-    # Delivery output goes outside the checkout. The default step installs, and
-    # `zig-out/` is a directory in the working tree, so the install prefix is
-    # named here; the pkg-config file and the rpath the build normalises are
-    # prefix-relative, so the installed tree is the same shape wherever it lands.
+    # Install prefixes stay outside the checkout.
     "sdk:build" = {
       description = ''
         Compile the native library and install the delivery tree (library, all
@@ -186,8 +123,7 @@ in
       '';
     };
 
-    # These five run or compile; none of them installs, so each needs only the
-    # external cache directory.
+    # Test and check tasks use the external cache without installing.
     "sdk:test" = {
       description = "Run the behavioural tests";
       exec = ''
@@ -212,11 +148,7 @@ in
       '';
     };
 
-    # Five targets, not six. `wasm32-wasi` is absent from `check_targets` for
-    # one stated reason -- that list is walked for both linkages and a shared
-    # object is refused on a target with no dynamic linker -- and nothing
-    # refuses a *static* WASI cell. The one-target form belongs on the command
-    # line: `zig build check -Dtarget=wasm32-wasi -Dlinkage=static`.
+    # The default check matrix omits WASI; the dedicated task checks static WASI.
     "sdk:check" = {
       description = ''
         Compile the 34-unit closure, the facade, the tests and the example for
@@ -236,10 +168,6 @@ in
       '';
     };
 
-    # The one WASI cell, named explicitly rather than smuggled into the matrix.
-    # It is a separate task because it is a separate fact: the five-target check
-    # above does not cover it, and pretending otherwise would leave the platform
-    # with no gate at all and no record that it had none.
     "sdk:check:wasm32-wasi" = {
       description = ''
         Compile the whole package for wasm32-wasi in the one linkage that
@@ -251,13 +179,7 @@ in
       '';
     };
 
-    # The dependent package in `consumer/`, built and run as itself. It reaches
-    # the library through the relative path dependency in its own manifest, so
-    # this is the proof that `dep.module("zstd")` works from outside this
-    # package. It is also the second place the interoperation claim is made:
-    # consumer/src/main.zig decodes frames built from RFC 8878 and frames the
-    # `zstd` CLI and the `python-zstandard` binding produced, from a package that
-    # did not write the facade.
+    # Exercise the published package from a separate consumer.
     "sdk:consumer" = {
       description = "Build and run the separate consumer package against this SDK";
       exec = ''
@@ -267,9 +189,6 @@ in
       '';
     };
 
-    # The checker runs against this checkout's own bytes and file set, which is
-    # what `UPSTREAM.sha256` describes, so it is entered here rather than in the
-    # directory the task happened to start in.
     "sdk:provenance" = {
       description = ''
         Check the 637 recorded upstream digests, the exact native file set, the 19
@@ -283,10 +202,6 @@ in
       '';
     };
 
-    # The runtime-loading builds. They are separate tasks because they are
-    # separate configurations, not tuning: the facade module links no archive at
-    # all under -Druntime and a provider is named by an explicit load(source),
-    # so the tests and the example need a path to one.
     "sdk:runtime:shared-provider" = {
       description = ''
         Build the shared object and keep it at a known path under the external
@@ -317,9 +232,6 @@ in
       '';
     };
 
-    # The other half of the contract: a runtime-loading build that was not told
-    # which provider to use stops and names ZSTD_TEST_PROVIDER, rather than
-    # falling back to a linked copy or to some default path.
     "sdk:runtime:no-provider" = {
       description = ''
         Assert that the runtime build refuses to run with no provider named, and
@@ -337,12 +249,7 @@ in
       '';
     };
 
-    # These two are the only bodies that do not enter this checkout, and that is
-    # deliberate. They run a nested `devenv build`, which reads the project the
-    # caller entered -- under `--from path:<sdk>` that is the scratch project
-    # holding `.devenv/` and `devenv.lock` -- and its delivery output is a store
-    # path, never a directory in this tree. Changing directory here would point
-    # the nested command at a directory with no devenv state at all.
+    # Package tasks run from the caller's project; outputs go to the Nix store.
     "sdk:package:static" = {
       description = ''
         Build the static Nix variant through devenv's own lazy output. No lock
