@@ -213,8 +213,7 @@ pub fn main(init: std.process.Init) !void {
     {
         var frame: [512]u8 = undefined;
         const n = try zstd.compress(&frame, payload, 3);
-        try checkInt(w, "compressBound bounds this build's output",
-            @intFromBool(n <= try zstd.compressBound(payload.len)), 1);
+        try checkInt(w, "compressBound bounds this build's output", @intFromBool(n <= try zstd.compressBound(payload.len)), 1);
         var back: [4096]u8 = undefined;
         try checkString(w, "the round trip returns the payload", back[0..try zstd.decompress(&back, frame[0..n])], payload);
 
@@ -239,14 +238,11 @@ pub fn main(init: std.process.Init) !void {
     try checkInt(w, "route check: header major", zstd.version_major, 1);
     try checkInt(w, "route check: header minor", zstd.version_minor, 5);
     try checkInt(w, "route check: header release", zstd.version_release, 7);
-    try checkInt(w, "route check: facade and raw escape hatch agree",
-        @intFromBool(try rawVersionNumber() == zstd.versionNumber()), 1);
+    try checkInt(w, "route check: facade and raw escape hatch agree", @intFromBool(try rawVersionNumber() == zstd.versionNumber()), 1);
 
     // Check a raw declaration not wrapped by the facade.
-    try checkInt(w, "raw ZSTD_isError accepts a success code",
-        @intFromBool(zstd.c.ZSTD_isError(0) == 0), 1);
-    try checkInt(w, "raw ZSTD_isError accepts a failure code",
-        @intFromBool(zstd.c.ZSTD_isError(std.math.maxInt(usize)) != 0), 1);
+    try checkInt(w, "raw ZSTD_isError accepts a success code", @intFromBool(zstd.c.ZSTD_isError(0) == 0), 1);
+    try checkInt(w, "raw ZSTD_isError accepts a failure code", @intFromBool(zstd.c.ZSTD_isError(std.math.maxInt(usize)) != 0), 1);
 
     try w.print("every answer matched the documented value\n", .{});
     try w.flush();

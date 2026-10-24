@@ -195,7 +195,7 @@ pub const EndOp = enum(c_int) {
     /// Emit at least one decodable block now and keep the frame open.
     flush = c.ZSTD_e_flush,
     /// Flush and close the frame; continue until the call returns 0.
-    @"end" = c.ZSTD_e_end,
+    end = c.ZSTD_e_end,
 };
 
 /// Select whether a reset clears the session, parameters, or both.

@@ -681,7 +681,7 @@ test "a context refuses an unknown parameter and is still usable" {
     try testing.expectError(error.WrongStage, ctx.setParameter(.window_log, 10));
     // Update-authorized parameters remain settable mid-frame.
     try ctx.setParameter(.search_log, 3);
-    try testing.expectEqual(@as(usize, 0), try ctx.stream2(&stream_out, &stream_in, .@"end"));
+    try testing.expectEqual(@as(usize, 0), try ctx.stream2(&stream_out, &stream_in, .end));
     try testing.expect(stream_out.pos > 0);
 
     const again = try ctx.compress(frame, plain_payload, 3);
@@ -733,7 +733,7 @@ test "a trained dictionary carries an ID and round-trips through CDict and DDict
                 cursor += text.len;
                 // Avoid an aliased copy: `bufPrint` returns a slice into its output buffer.
                 var digits: [number_len]u8 = undefined;
-                const number = std.fmt.bufPrint(&digits, "{d:0>4}", .{ index * 10 + record }) catch unreachable;
+                const number = std.fmt.bufPrint(&digits, "{d:0>4}", .{index * 10 + record}) catch unreachable;
                 @memcpy(sample[cursor..][0..number.len], number);
                 cursor += number.len;
                 sample[cursor] = '\n';
@@ -870,7 +870,7 @@ test "streaming compression and decompression carry the same bytes" {
     var fed: usize = 0;
     while (fed < plain_payload.len) {
         const take = @min(@as(usize, 64), plain_payload.len - fed);
-        const end: zstd.EndOp = if (fed + take == plain_payload.len) .@"end" else .@"continue";
+        const end: zstd.EndOp = if (fed + take == plain_payload.len) .end else .@"continue";
         var input = zstd.InBuffer{
             .src = plain_payload[fed..].ptr,
             .size = take,
@@ -881,7 +881,7 @@ test "streaming compression and decompression carry the same bytes" {
         written += output.pos;
         fed += input.pos;
         // A finished frame has a zero hint.
-        if (end == .@"end") try testing.expectEqual(@as(usize, 0), hint);
+        if (end == .end) try testing.expectEqual(@as(usize, 0), hint);
     }
     try testing.expect(written > 0);
 
