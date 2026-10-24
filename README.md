@@ -41,12 +41,10 @@ The WASI target is static-only. Dynamic linkage is refused when the target has n
 
 ## Consumption
 
-For a sibling checkout, add this dependency to `build.zig.zon`:
+Fetch this package from GitHub into the consumer's `build.zig.zon`:
 
-```zig
-.dependencies = .{
-    .zstd = .{ .path = "../zstd" },
-},
+```sh
+zig fetch --save git+https://github.com/CoffeeImpliesCode/zstd#v1.5.7
 ```
 
 In the consumer build script, import the module and link the artifact:
