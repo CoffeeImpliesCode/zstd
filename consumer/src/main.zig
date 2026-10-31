@@ -4,6 +4,7 @@
 //! Consume only the published `zstd` module.
 //! Check a digest, RFC 8878 frames, and fixtures from zstd CLI 1.5.7 and
 //! python-zstandard 0.22.0 over libzstd 1.5.7 (not independent encoders).
+//! Producer versions and fixture digests are recorded in `fixtures/PROVENANCE.md`.
 //! Also compare linked and runtime-loaded routes.
 
 const std = @import("std");

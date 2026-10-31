@@ -1,0 +1,538 @@
+# Verification for the Zig package in this repository.
+#
+# Upstream's release *does* ship CI: `src/.github/workflows/` holds seven
+# workflow files. None of them is copied here, and that is deliberate rather than
+# an oversight. They belong to upstream's repository and its release process --
+# they build with upstream's own Make/CMake paths, run upstream's own test and
+# fuzzer harnesses against the CLI this package does not build, and publish
+# upstream's release artefacts. Copying them would put another maintainer's
+# pipeline into a fork's CI, where it would fail for reasons that have nothing to
+# do with this package. They stay in `src/`, digested and unmodified.
+#
+# This file is therefore entirely the fork's, and it gates the artifacts this
+# fork delivers.
+#
+# Four jobs, four different questions:
+#   native    does the whole 34-unit closure compile and link in both linkages,
+#             do the tests and the example run, and does the *installed* tree
+#             serve a plain C consumer driven by values this package did not
+#             compute
+#   cross     does the whole package compile for each of the five check targets
+#             without running any of them, plus the one wasm32-wasi cell that
+#             `check` deliberately leaves out
+#   cross-shared
+#             the same five through -Dlinkage=dynamic
+#   consumer  does the published module resolve from a package that did not
+#             write it, in both linkages
+#
+# The two linkages share one `native` job rather than being two jobs. The C gate
+# program below is written once into `$RUNNER_TEMP` and used against both
+# deliveries, which is only possible in one job - and sharing it is what makes
+# the comparison meaningful: the same program has to pass linked against
+# `libzstd.a` and linked against `libzstd.so`, so a difference between the two
+# artifacts cannot hide.
+#
+# There is no `continue-on-error` in this file and there is no matrix with a
+# tolerated target. Each target is a separate step on purpose: a matrix row
+# allowed to fail is indistinguishable from a target that was quietly dropped,
+# and "we know that one is broken" is only a fact once a gate run has printed
+# the failure.
+#
+# System-library mode (`-Dsystem=true`) is deliberately not a step here: it needs
+# an installed libzstd with its own headers, and a stock runner has neither.
+#
+# The full 53-platform matrix is not in this file. `cross-test`, run from the
+# package root, builds and *runs* `tests.zig` for every platform in Zig 0.16.0's
+# published Tier 1/2 table through this repository's own build graph, using
+# `cross-test.profile.sh` for its settings. It is not a job here because
+# `cross-test` and its sibling helpers are a host-local tool with its own runner
+# detection and its own scratch policy, not something a GitHub runner has;
+# adding a job that invoked a path it does not have would fail for a reason that
+# has nothing to do with this package, and wrapping that job in an availability
+# check would turn a missing gate into a green one. So this file does not
+# pretend to cover it and does not stand in for it: the `cross` jobs below run
+# nothing, and a platform with no runner on the host is recorded as explicit
+# `build_only` coverage, never as a pass.
+
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: native build, tests, example and installed closure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      # The bytes, the exact upstream file set, the fixture manifest, and BOTH
+      # of upstream's licence texts. Zstandard's grant is "either, at your
+      # option" (`src/lib/libzstd.mk:8`), so a package that shipped one text and
+      # dropped the other would have narrowed it; and `src/tests/gzip/` is
+      # GPL-2.0-or-later, so the inventory has to stay honest about that too.
+      - name: immutable source, fixtures and both licence texts
+        run: |
+          set -euo pipefail
+          sha256sum -c UPSTREAM.sha256
+          tools/check-provenance.sh
+
+      # Written once, used by both linkages.
+      #
+      # Every reference value in this program comes from outside it: the ten-byte
+      # RLE frame was built byte by byte from RFC 8878's normative text and the
+      # 26-byte Raw_Block frame likewise, and the payload is the file
+      # `fixtures/plain.bin` holds, digested in `fixtures/SHA256SUMS`. None of
+      # them is computed here and compared against itself.
+      - name: write the C gate program
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/c_surface_gate.c" <<'C'
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+
+          #include <zstd.h>
+          #include <zdict.h>
+
+          /* RFC 8878 §3.1.1: the frame magic, 0xFD2FB528 little-endian. */
+          static const unsigned char MAGIC[4] = { 0x28, 0xb5, 0x2f, 0xfd };
+
+          /* RFC 8878 §3.1.1.1.1 Table 3, §3.1.1.2 Table 9 and §3.1.1.2.2.
+             Frame_Header_Descriptor 0x20 is Single_Segment_flag set with
+             Content_Checksum_flag clear and Dictionary_ID_flag zero, so the
+             Frame_Content_Size field is one byte and there is no
+             Window_Descriptor. 0x000643 as a 24-bit little-endian Block_Header
+             is Last_Block 1, Block_Type RLE_Block, Block_Size 200. */
+          static const unsigned char RLE_FRAME[10] = {
+              0x28, 0xb5, 0x2f, 0xfd, 0x20, 0xc8, 0x43, 0x06, 0x00, 0x5a
+          };
+
+          /* The same header shape with a Raw_Block of 26 literal bytes. */
+          static const unsigned char RAW_FRAME[35] = {
+              0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x1a, 0xd1, 0x00, 0x00,
+              'R',  'F',  'C',  ' ',  '8',  '8',  '7',  '8',  ' ',
+              'r',  'a',  'w',  ' ',  'b',  'l',  'o',  'c',  'k',
+              ' ',  'p',  'a',  'y',  'l',  'o',  'a',  'd'
+          };
+
+          static const char RAW_PLAIN[] = "RFC 8878 raw block payload";
+
+          /* The CLI v1.5.7's version line, as fixtures/cli-version.txt records
+             it. Checked against the library's own version string. */
+          static const char *want_version = "1.5.7";
+
+          static int failures;
+
+          static void check(int ok, const char *what, long got, long want)
+          {
+              if (ok) {
+                  printf("ok   %-46s %ld\n", what, got);
+              } else {
+                  printf("FAIL %-46s got %ld want %ld\n", what, got, want);
+                  failures++;
+              }
+          }
+
+          static unsigned char *slurp(const char *path, size_t *len)
+          {
+              FILE *f = fopen(path, "rb");
+              unsigned char *buf;
+              if (!f) { perror(path); exit(2); }
+              buf = malloc(1 << 22);
+              if (!buf) { fprintf(stderr, "out of memory\n"); exit(2); }
+              *len = fread(buf, 1, 1 << 22, f);
+              fclose(f);
+              return buf;
+          }
+
+          int main(int argc, char **argv)
+          {
+              const char *payload_path = argc > 1 ? argv[1] : "fixtures/plain.bin";
+              const char *producer_path = argc > 2 ? argv[2] : "fixtures/cli/level-3.zst";
+              unsigned char *payload, *produced, out[4096];
+              size_t payload_len, produced_len;
+              ZSTD_DCtx *dctx;
+
+              payload = slurp(payload_path, &payload_len);
+
+              /* The library's own version, against the release this manifest
+                 pins. A library that disagreed with its headers would be caught
+                 here rather than by a consumer at run time. */
+              {
+                  unsigned v = ZSTD_versionNumber();
+                  char buf[16];
+                  snprintf(buf, sizeof buf, "%u.%u.%u",
+                           v / 10000, (v / 100) % 100, v % 100);
+                  check(strcmp(buf, want_version) == 0,
+                        "ZSTD_versionNumber() is the pinned release",
+                        0, 0);
+                  check(ZSTD_isError(ZSTD_compressBound(payload_len)) == 0,
+                        "compressBound never reports an error", 0, 0);
+              }
+
+              check(payload_len == 232, "the shared payload is 232 bytes",
+                    (long)payload_len, 232L);
+
+              /* The specification oracle, decoded before anything is trusted.
+                 The magic is compared byte by byte first, because a frame whose
+                 first four bytes are wrong is not this frame. */
+              check(memcmp(RLE_FRAME, MAGIC, 4) == 0,
+                    "the RFC frame starts with the RFC 8878 magic", 0, 0);
+              check(ZSTD_findFrameCompressedSize(RLE_FRAME, sizeof RLE_FRAME) == sizeof RLE_FRAME,
+                    "the RFC frame occupies exactly ten bytes", 0, 0);
+              {
+                  unsigned long long size = ZSTD_getFrameContentSize(RLE_FRAME, sizeof RLE_FRAME);
+                  check(size == 200, "the RFC frame declares 200 bytes",
+                        (long)size, 200L);
+              }
+              {
+                  size_t n = ZSTD_decompress(out, sizeof out, RLE_FRAME, sizeof RLE_FRAME);
+                  int all_same = (n == 200);
+                  size_t i;
+                  for (i = 0; i < n; i++) if (out[i] != 0x5a) all_same = 0;
+                  check(all_same, "the RFC RLE block stands for its byte", (long)n, 200L);
+              }
+              {
+                  size_t n = ZSTD_decompress(out, sizeof out, RAW_FRAME, sizeof RAW_FRAME);
+                  check(n == 26 && memcmp(out, RAW_PLAIN, 26) == 0,
+                        "the RFC Raw_Block decodes to its literals", (long)n, 26L);
+              }
+
+              /* A frame produced by another program: the `zstd` CLI v1.5.7, at
+                 its default level, over the same payload. */
+              produced = slurp(producer_path, &produced_len);
+              {
+                  size_t n = ZSTD_decompress(out, sizeof out, produced, produced_len);
+                  check(n == payload_len && memcmp(out, payload, payload_len) == 0,
+                        producer_path, (long)n, (long)payload_len);
+              }
+
+              /* The streaming path, which is a different implementation inside
+                 the library, against the same external frame. */
+              dctx = ZSTD_createDCtx();
+              if (!dctx) { fprintf(stderr, "ZSTD_createDCtx failed\n"); return 2; }
+              {
+                  size_t n = ZSTD_decompressDCtx(dctx, out, sizeof out, produced, produced_len);
+                  check(n == payload_len && memcmp(out, payload, payload_len) == 0,
+                        "the context path decodes the producer's frame too",
+                        (long)n, (long)payload_len);
+              }
+              ZSTD_freeDCtx(dctx);
+
+              /* A refusal, so that a decoder which accepted everything would
+                 not pass. The payload is not a frame. */
+              check(ZSTD_isError(ZSTD_decompress(out, sizeof out, payload, payload_len)) != 0,
+                    "input that is not a frame is refused", 0, 0);
+
+              /* The dictionary entry points come from zdict.h and carry their
+                 own error convention; ZDICT_isError is not ZSTD_isError. */
+              check(ZDICT_isError(0) == 0, "ZDICT_isError accepts a success code", 0, 0);
+              check(ZDICT_isError((size_t)-1) != 0, "ZDICT_isError accepts a failure code", 0, 0);
+              check(ZDICT_getDictID(RAW_FRAME, sizeof RAW_FRAME) == 0,
+                    "the dictionary API rejects a frame as a dictionary", 0, 0);
+
+              free(payload);
+              free(produced);
+              printf("%s: %d failure(s)\n", failures ? "FAILED" : "passed", failures);
+              return failures ? 1 : 0;
+          }
+          C
+
+      # ---------------------------------------------------------------- static
+      - name: build (static, the default)
+        run: zig build --summary all
+
+      # The installed closure is the deliverable, so it is checked as a layout
+      # and not merely as a successful exit code: the artifact names upstream's
+      # own libzstd.mk and Makefile give, all three public headers that
+      # `src/lib/module.modulemap` names, the pkg-config file, and BOTH licence
+      # texts with this fork's records.
+      - name: static installed closure is complete
+        run: |
+          set -euo pipefail
+          test -f zig-out/lib/libzstd.a
+          test -f zig-out/include/zstd.h
+          test -f zig-out/include/zstd_errors.h
+          test -f zig-out/include/zdict.h
+          test -f zig-out/lib/pkgconfig/zstd.pc
+          test -f zig-out/share/licenses/zstd/LICENSE
+          test -f zig-out/share/licenses/zstd/COPYING
+          test -f zig-out/share/licenses/zstd/README.md
+          test -f zig-out/share/licenses/zstd/NOTICE.md
+          test -f zig-out/share/licenses/zstd/FORK-LICENSE.md
+          test -f zig-out/share/licenses/zstd/UPSTREAM.md
+          test -f zig-out/share/licenses/zstd/UPSTREAM.sha256
+          # A package that installed one licence text and dropped the other
+          # would have narrowed the grant `src/lib/libzstd.mk:8` publishes.
+          test -s zig-out/share/licenses/zstd/LICENSE
+          test -s zig-out/share/licenses/zstd/COPYING
+          echo "static installed closure is complete, with both licence texts"
+
+      # No executable: src/programs/ is upstream's CLI, this package does not
+      # compile it, and upstream's own library install rule does not install it.
+      - name: no upstream program was installed
+        run: |
+          set -euo pipefail
+          if [ -d zig-out/bin ] && [ -n "$(ls -A zig-out/bin 2>/dev/null)" ]; then
+            echo "FAIL: an executable was installed; src/programs/ is not this package's" >&2
+            ls -A zig-out/bin >&2
+            exit 1
+          fi
+          echo "no executable in the install tree"
+
+      - name: pkg-config answers for the static install
+        run: |
+          set -euo pipefail
+          export PKG_CONFIG_PATH="$PWD/zig-out/lib/pkgconfig"
+          pkg-config --exists zstd
+          test "$(pkg-config --modversion zstd)" = "1.5.7"
+          # prefix is pcfiledir-relative so the installation remains relocatable.
+          libdir=$(pkg-config --variable=libdir zstd)
+          echo "pkg-config libdir: $libdir"
+          echo "pkg-config: $(pkg-config --libs --cflags zstd)"
+          test "$(realpath "$libdir")" = "$(realpath zig-out/lib)"
+          # pkg-config implementations differ in whitespace and path spelling.
+          read -r -a libs <<< "$(pkg-config --libs zstd)"
+          test "${#libs[@]}" = 2
+          [[ "${libs[0]}" == -L* ]]
+          test "$(realpath "${libs[0]#-L}")" = "$(realpath zig-out/lib)"
+          test "${libs[1]}" = "-lzstd"
+
+      - name: installed C headers compile, link and run against the archive
+        run: |
+          set -euo pipefail
+          export PKG_CONFIG_PATH="$PWD/zig-out/lib/pkgconfig"
+          zig cc -std=c99 \
+            $(pkg-config --cflags zstd) \
+            "$RUNNER_TEMP/c_surface_gate.c" \
+            -o "$RUNNER_TEMP/c_gate_static" \
+            $(pkg-config --libs zstd)
+          "$RUNNER_TEMP/c_gate_static" fixtures/plain.bin fixtures/cli/level-3.zst
+
+      - name: test (static, Debug)
+        run: zig build test
+
+      - name: test (static, ReleaseSafe)
+        run: zig build test -Doptimize=ReleaseSafe
+
+      - name: smoke (static)
+        run: zig build smoke
+
+      # --------------------------------------------------------------- dynamic
+      - name: build (shared object)
+        run: |
+          set -euo pipefail
+          rm -rf zig-out
+          zig build -Dlinkage=dynamic --summary all
+
+      # src/lib/Makefile:87 gives the ELF soname and :82 the Darwin spelling.
+      - name: shared install is a loadable object with upstream's ABI name
+        run: |
+          set -euo pipefail
+          so=zig-out/lib/libzstd.so
+          test -f "$so"
+          readelf -d "$so" | grep -q 'SONAME.*libzstd.so.1'
+          echo "libzstd.so with soname libzstd.so.1"
+
+      # The ELF version script exposes ZSTD_* and ZDICT_* and localizes other
+      # helpers. Experimental ZSTD_* APIs are visible by upstream's default,
+      # so they must not be mistaken for explicitly hidden helpers.
+      - name: ELF export boundary retains API and hides private helpers
+        run: |
+          set -euo pipefail
+          so=zig-out/lib/libzstd.so
+          exported=$(nm -D --defined-only --without-symbol-versions "$so" | awk '{print $3}' | LC_ALL=C sort)
+          grep -qx 'ZSTD_compress' <<< "$exported"
+          grep -qx 'ZSTD_decompress' <<< "$exported"
+          grep -qx 'ZSTD_compressBound' <<< "$exported"
+          grep -qx 'ZSTD_versionNumber' <<< "$exported"
+          grep -qx 'ZSTD_getFrameContentSize' <<< "$exported"
+          grep -qx 'ZDICT_trainFromBuffer' <<< "$exported"
+          defined=$(nm --defined-only "$so" | awk '{print $3}' | LC_ALL=C sort)
+          for internal in FSE_readNCount HUF_readStats HUF_decompress4X1_usingDTable_internal_fast_asm_loop; do
+            grep -qx "$internal" <<< "$defined"
+            if grep -qx "$internal" <<< "$exported"; then
+              echo "FAIL $internal escapes the ELF export boundary" >&2
+              exit 1
+            fi
+          done
+          echo "the ELF API is exported and private helpers remain local"
+
+      # Compared on identical ground: the same gate program, the same RFC frames
+      # and the same producer's frame as the static run above.
+      - name: installed C headers load the shared object through pkg-config and run
+        run: |
+          set -euo pipefail
+          export PKG_CONFIG_PATH="$PWD/zig-out/lib/pkgconfig"
+          test "$(pkg-config --modversion zstd)" = "1.5.7"
+          zig cc -std=c99 \
+            $(pkg-config --cflags zstd) \
+            "$RUNNER_TEMP/c_surface_gate.c" \
+            -o "$RUNNER_TEMP/c_gate_shared" \
+            $(pkg-config --libs zstd)
+          LD_LIBRARY_PATH="$PWD/zig-out/lib" \
+            "$RUNNER_TEMP/c_gate_shared" fixtures/plain.bin fixtures/cli/level-3.zst
+
+      - name: test (shared object, Debug)
+        run: zig build test -Dlinkage=dynamic
+
+      - name: test (shared object, ReleaseSafe)
+        run: zig build test -Dlinkage=dynamic -Doptimize=ReleaseSafe
+
+      - name: smoke (shared object)
+        run: zig build smoke -Dlinkage=dynamic
+
+      # ------------------------------------------------------- runtime loading
+      # `-Druntime` is a different configuration, not a different optimisation:
+      # the facade module links no archive at all and a provider is named by an
+      # explicit `load(source)`. The provider here is the shared object this same
+      # tree just built, named explicitly -- never discovered -- because a
+      # build that was not told which file to load must say so instead of
+      # loading something else.
+      - name: runtime dispatch, tests against the shared object
+        run: |
+          set -euo pipefail
+          ZSTD_TEST_PROVIDER="$PWD/zig-out/lib/libzstd.so" \
+            zig build test -Druntime=true
+
+      - name: runtime dispatch, example against the shared object
+        run: |
+          set -euo pipefail
+          zig build smoke -Druntime=true \
+            -- --provider "$PWD/zig-out/lib/libzstd.so"
+
+      # The other half of the contract: a runtime-loading build that was not
+      # told which provider to use stops and says so, rather than falling back
+      # to a linked copy or to some default path.
+      - name: an unnamed provider is refused, with the reason
+        run: |
+          set -uo pipefail
+          unset ZSTD_TEST_PROVIDER
+          if output=$(zig build smoke -Druntime=true 2>&1); then
+            echo "FAIL: the smoke run succeeded with no provider named" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          echo "$output" | grep -q 'ZSTD_TEST_PROVIDER'
+          echo "the run refused and named ZSTD_TEST_PROVIDER"
+
+  cross:
+    name: cross-target compile matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      # Nothing here runs. Each cell compiles the whole 34-unit closure,
+      # translates all three headers, and links the facade, the tests and the
+      # example -- so a cell is a check of the facade rather than of an
+      # unreferenced archive.
+      - name: check x86_64-linux-gnu
+        run: zig build check -Dtarget=x86_64-linux-gnu --summary all
+
+      # The cell that also assembles decompress/zstd_decompress_amd64.S, because
+      # `decompressAssembly` at build.zig:489-491 selects on the architecture.
+      - name: check aarch64-linux-gnu
+        run: zig build check -Dtarget=aarch64-linux-gnu --summary all
+
+      # Mach-O. `src/lib/Makefile:82` spells the soname differently here, and
+      # `src/lib/zstd.h:47-51` puts the __declspec split on a different footing.
+      - name: check aarch64-macos-none
+        run: zig build check -Dtarget=aarch64-macos-none --summary all
+
+      - name: check x86_64-windows-gnu
+        run: zig build check -Dtarget=x86_64-windows-gnu --summary all
+
+      - name: check riscv64-linux-gnu
+        run: zig build check -Dtarget=riscv64-linux-gnu --summary all
+
+      # The sixth workspace target, which `check` deliberately leaves out of its
+      # matrix -- not because anything refuses it, but because the matrix is
+      # walked for both linkages and a shared object is refused on a target whose
+      # OS has no dynamic linker (build.zig:1498-1505). The static cell is
+      # therefore asserted here, explicitly, rather than being a row nobody
+      # remembers. Nothing here runs it.
+      - name: check wasm32-wasi, static only
+        run: zig build check -Dtarget=wasm32-wasi -Dlinkage=static --summary all
+
+  cross-shared:
+    name: cross-target compile matrix, shared artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      - name: check x86_64-linux-gnu
+        run: zig build check -Dlinkage=dynamic -Dtarget=x86_64-linux-gnu --summary all
+
+      - name: check aarch64-linux-gnu
+        run: zig build check -Dlinkage=dynamic -Dtarget=aarch64-linux-gnu --summary all
+
+      # Mach-O and COFF have no version-script mechanism, so a shared object
+      # from this build exports Zstandard's internals as well as its API.
+      # `build.zig` prints that at configure time rather than leaving it to be
+      # discovered by `nm -D`; this step is where that claim is checked.
+      - name: check aarch64-macos-none
+        run: zig build check -Dlinkage=dynamic -Dtarget=aarch64-macos-none --summary all
+
+      - name: check x86_64-windows-gnu
+        run: zig build check -Dlinkage=dynamic -Dtarget=x86_64-windows-gnu --summary all
+
+      - name: check riscv64-linux-gnu
+        run: zig build check -Dlinkage=dynamic -Dtarget=riscv64-linux-gnu --summary all
+
+      # wasm32-wasi is a refusing row here, and it is *not* dropped. The shared
+      # object on a target whose OS has no dynamic linker is refused by
+      # `deliveredLinkage`, so this step asserts that specific documented
+      # refusal rather than a vague failure -- which pins *which* refusal it is,
+      # and pins it as one that fires before any delivery decision.
+      - name: wasm32-wasi is refused a shared object before delivery is chosen
+        run: |
+          set -uo pipefail
+          if output=$(zig build check -Dlinkage=dynamic -Dtarget=wasm32-wasi 2>&1); then
+            echo "FAIL: a shared object on wasm32-wasi was accepted" >&2
+            echo "$output" >&2
+            exit 1
+          fi
+          echo "$output" | grep -qi 'dynamic\|shared'
+          echo "the shared object is refused on wasm32-wasi, for the documented reason"
+
+  consumer:
+    name: consumer package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+
+      # The dependent package in consumer/, reached through a relative path in
+      # its own manifest rather than a fetch, so what this proves is that the
+      # published module resolves from a package that did not write it.
+      #
+      # It is also the second place the interoperation claim is made, and the
+      # program itself checks that it decoded at least one external frame -- so
+      # a silent "no frames named" cannot pass as success. The default arguments
+      # are set by consumer/build.zig; passing them here makes the check
+      # explicit in the log rather than implicit in the build graph.
+      - name: run
+        working-directory: consumer
+        run: zig build run -- ../fixtures/cli/level-3.zst ../fixtures/pyzstd/bare-3.zst
+
+      - name: run against the shared object
+        working-directory: consumer
+        run: zig build run -Dlinkage=dynamic -- ../fixtures/cli/level-3.zst ../fixtures/pyzstd/bare-3.zst

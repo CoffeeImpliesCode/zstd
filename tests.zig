@@ -3,6 +3,7 @@
 
 //! Behavioural tests for the Zstandard facade.
 //! Oracles come from RFC 8878, upstream golden frames, and recorded producer output.
+//! Producer versions and fixture digests are recorded in `fixtures/PROVENANCE.md`.
 //! Test-owned buffers use `testing.allocator`; libzstd owns its internal allocations.
 
 const std = @import("std");
